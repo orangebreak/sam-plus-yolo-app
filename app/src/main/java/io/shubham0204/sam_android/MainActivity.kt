@@ -120,8 +120,8 @@ class MainActivity : ComponentActivity() {
             0.5f,
             0.3f,
             2,
-            5,
-            0, // CPU
+            10,
+            0, // GPU
             4, // YOLO
             context = this,
         )
