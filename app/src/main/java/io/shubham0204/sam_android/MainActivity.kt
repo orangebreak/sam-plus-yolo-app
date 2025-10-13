@@ -100,15 +100,31 @@ import java.nio.file.Paths
 import kotlin.time.DurationUnit
 import kotlin.time.measureTimedValue
 
+import org.tensorflow.lite.examples.objectdetection.detectors.ObjectDetector
+import org.tensorflow.lite.examples.objectdetection.detectors.YoloDetector
+import org.tensorflow.lite.support.image.TensorImage
+
 class MainActivity : ComponentActivity() {
     private val encoder = SAMEncoder()
     private val decoder = SAMDecoder()
     private val encoderFileName = "encoder_base_plus.onnx"
     private val decoderFileName = "decoder_base_plus.onnx"
 
+    private lateinit var yoloDetector: YoloDetector
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        yoloDetector = YoloDetector(
+            0.5f,
+            0.3f,
+            2,
+            5,
+            0, // CPU
+            4, // YOLO
+            context = this,
+        )
 
         setContent {
             SAMAndroidTheme {
@@ -137,8 +153,9 @@ class MainActivity : ComponentActivity() {
                                     encoder.init(Paths.get(filesDir.absolutePath, encoderFileName).toString())
                                     decoder.init(Paths.get(filesDir.absolutePath, decoderFileName).toString())
                                 } else {
-                                    encoder.init("/data/local/tmp/sam/encoder_base_plus.onnx")
-                                    decoder.init("/data/local/tmp/sam/decoder_base_plus.onnx")
+                                    // TODO: try with FP16
+                                    encoder.init("/data/local/tmp/sam/encoder_base_plus.onnx", useFP16 = false)
+                                    decoder.init("/data/local/tmp/sam/decoder_base_plus.onnx", useFP16 = false)
                                 }
                                 isReady = true
                                 hideProgressDialog()
@@ -205,12 +222,13 @@ class MainActivity : ComponentActivity() {
                                 enabled = isReady && (image != null),
                                 onClick = {
                                     image?.let { bitmap ->
-                                        processInputPoints(
-                                            bitmap,
-                                            points,
-                                            viewPortDims,
-                                            viewModel,
-                                        )
+                                        detectAndProcess(bitmap, viewPortDims, viewModel)
+//                                        processInputPoints(
+//                                            bitmap,
+//                                            points,
+//                                            viewPortDims,
+//                                            viewModel,
+//                                        )
                                     }
                                 },
                             ) {
@@ -281,7 +299,8 @@ class MainActivity : ComponentActivity() {
                                                         ),
                                                     )
                                                 })
-                                            }.onGloballyPositioned {
+                                            }
+                                            .onGloballyPositioned {
                                                 viewPortDims = it.size.toSize()
                                             },
                                 )
@@ -402,7 +421,8 @@ class MainActivity : ComponentActivity() {
                                     Modifier
                                         .clickable {
                                             selectedLabelIndex = index
-                                        }.background(if (selectedLabelIndex == index) Color.Cyan else Color.White)
+                                        }
+                                        .background(if (selectedLabelIndex == index) Color.Cyan else Color.White)
                                         .padding(8.dp)
                                         .fillMaxWidth(),
                             )
@@ -440,6 +460,99 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    private fun detectAndProcess(
+        bitmap: Bitmap,
+        viewPortDims: Size?,
+        viewModel: MainActivityViewModel
+    ) {
+        if (viewPortDims == null) {
+            Toast.makeText(this, "View not ready, please wait.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        CoroutineScope(Dispatchers.Default).launch {
+            // 1. Create a TensorImage from the Bitmap. Rotation is 0 because getFixedBitmap handles it.
+            val tensorImage = org.tensorflow.lite.support.image.TensorImage.fromBitmap(bitmap)
+            val detectionResult = yoloDetector.detect(tensorImage, 0)
+            val preprocessedImage = detectionResult.image
+
+            // 2. Calculate scaling factors to map bitmap coordinates to view coordinates.
+            // This is necessary because the Image composable uses ContentScale.Fit.
+            val viewWidth = viewPortDims.width
+            val viewHeight = viewPortDims.height
+            val bitmapWidth = bitmap.width.toFloat()
+            val bitmapHeight = bitmap.height.toFloat()
+
+            val viewAspectRatio = viewWidth / viewHeight
+            val bitmapAspectRatio = bitmapWidth / bitmapHeight
+
+            val scale: Float
+            var offsetX = 0f
+            var offsetY = 0f
+
+            if (bitmapAspectRatio > viewAspectRatio) { // Letterbox on top/bottom
+                scale = viewWidth / bitmapWidth
+                offsetY = (viewHeight - bitmapHeight * scale) / 2
+            } else { // Pillarbox on left/right
+                scale = viewHeight / bitmapHeight
+                offsetX = (viewWidth - bitmapWidth * scale) / 2
+            }
+
+            // The detector's bounding box coordinates are relative to the preprocessed (resized) image.
+            // We need to scale them back to the original bitmap's coordinate space first.
+            val scaleXyolo = bitmap.width.toFloat() / preprocessedImage.width
+            val scaleYyolo = bitmap.height.toFloat() / preprocessedImage.height
+
+
+            // 3. Convert detector's bounding boxes to LabelPoints in VIEW coordinates.
+            // For each bounding box, we use the top-left and bottom-right corners as point prompts for SAM.
+            // We use the detection's index as a unique label for each object.
+            val detectedPoints = detectionResult.detections.withIndex().flatMap { (index, detection) ->
+                val yoloBox = detection.boundingBox
+                // a. Get corners of the box in preprocessed image coordinates
+                val topLeftX = yoloBox.left
+                val topLeftY = yoloBox.top
+                val bottomRightX = yoloBox.right
+                val bottomRightY = yoloBox.bottom
+
+                // b. Scale corners to original bitmap coordinates
+                val bitmapTopLeftX = topLeftX * scaleXyolo
+                val bitmapTopLeftY = topLeftY * scaleYyolo
+                val bitmapBottomRightX = bottomRightX * scaleXyolo
+                val bitmapBottomRightY = bottomRightY * scaleYyolo
+
+                // c. Scale corners to view coordinates to be displayed on screen
+                val viewTopLeftX = bitmapTopLeftX * scale + offsetX
+                val viewTopLeftY = bitmapTopLeftY * scale + offsetY
+                val viewBottomRightX = bitmapBottomRightX * scale + offsetX
+                val viewBottomRightY = bitmapBottomRightY * scale + offsetY
+
+                // d. Create two LabelPoints for the bounding box, using the index as a unique label
+                listOf(
+                    LabelPoint(
+                        label = index, // Use the object's index as its unique label
+                        point = PointF(viewTopLeftX, viewTopLeftY)
+                    ),
+                    LabelPoint(
+                        label = index, // Use the same unique label for both points of the box
+                        point = PointF(viewBottomRightX, viewBottomRightY)
+                    )
+                )
+            }
+
+            // 4. Update the points in the ViewModel to show them on screen
+            // and then trigger segmentation.
+            withContext(Dispatchers.Main) {
+                viewModel.points.clear()
+                viewModel.points.addAll(detectedPoints)
+            }
+
+            // 5. Call the existing processing function with the newly generated points.
+            processInputPoints(bitmap, detectedPoints, viewPortDims, viewModel)
+        }
+    }
+
 
     private fun processInputPoints(
         bitmap: Bitmap,

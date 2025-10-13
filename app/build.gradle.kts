@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "io.shubham0204.sam_android"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "io.shubham0204.sam_android"
@@ -18,6 +18,11 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += ""
+            }
         }
     }
 
@@ -48,6 +53,12 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 }
 
 dependencies {
@@ -64,6 +75,22 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.0")
+
+    // TensorFlow Lite
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.task.vision)
+    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.12.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.12.0")
+
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.view)
+    implementation(libs.androidx.camera.extensions)
+    implementation(libs.androidx.camera.video)
+
+    implementation(libs.snakeyaml) // <-- ADD THIS LINE
 
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.exifinterface)

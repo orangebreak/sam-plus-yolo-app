@@ -1,0 +1,12 @@
+stride: 32
+task: detect
+batch: 1
+imgsz:
+  - 640
+  - 640
+names:
+  0: concrete
+  1: material
+  2: iron
+  3: concrete coloumns
+  4: concrete_walls
