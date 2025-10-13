@@ -170,42 +170,45 @@ class SAMDecoder {
             val scores = (outputs[scoresOutputName].get() as OnnxTensor).floatBuffer.array()
             Log.i(SAMDecoder::class.simpleName, "scores: ${scores.contentToString()}")
 
-            // We apply masks to the input image in a parallel manner
-            // by dispatching each (mask,image) pair to a new coroutine
-            val bitmaps = Collections.synchronizedList(mutableListOf<Bitmap>())
-
             val numPredictedMasks = scores.size / numLabels.toInt()
             Log.i(SAMDecoder::class.simpleName, "Num predicted masks: $numPredictedMasks")
             Log.i(SAMDecoder::class.simpleName, "Mask size: ${mask.capacity()}")
 
-            (0..<numLabels.toInt())
-                .map { labelIndex ->
-                    launch(Dispatchers.Default) {
-                        // Apply mask to the input image
-                        // The 'on' pixels (val > 0) in the mask, will deliver an pixel
-                        // with alpha = 0 in the final image
-                        val maskStartIndex = labelIndex * numPredictedMasks * imgHeight * imgWidth
-                        val colorBitmap = Bitmap.createBitmap(imgWidth, imgHeight, Bitmap.Config.ARGB_8888)
-                        for (i in 0..<imgHeight) {
-                            for (j in 0..<imgWidth) {
-                                colorBitmap[j, i] =
-                                    Color.argb(
-                                        if (mask[maskStartIndex + j + i * imgWidth].toInt() > 0) {
-                                            0
-                                        } else {
-                                            255
-                                        },
-                                        Color.red(inputImage[j, i]),
-                                        Color.green(inputImage[j, i]),
-                                        Color.blue(inputImage[j, i]),
-                                    )
-                            }
-                        }
-                        bitmaps.add(colorBitmap)
-                    }
-                }.joinAll()
+            // Create a single mutable bitmap from the input image. This will be our canvas.
+            val finalBitmap = inputImage.copy(Bitmap.Config.ARGB_8888, true)
 
-            return@withContext bitmaps
+            // 1. Define a list of colors for the masks. You can add more colors here.
+            val colors = listOf(
+                Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW, Color.CYAN,
+                Color.MAGENTA, Color.rgb(255, 165, 0), Color.rgb(128, 0, 128)
+            )
+
+            // Loop through each label and modify the single bitmap.
+            for (labelIndex in 0..<numLabels.toInt()) {
+                // 2. Get a unique color for the current label, cycling through the list.
+                val colorForLabel = colors[labelIndex % colors.size]
+
+                // 3. Create a semi-transparent version of the color (128 is ~50% transparent).
+                val semiTransparentColor = Color.argb(
+                    128,
+                    Color.red(colorForLabel),
+                    Color.green(colorForLabel),
+                    Color.blue(colorForLabel)
+                )
+
+                val maskStartIndex = labelIndex * numPredictedMasks * imgHeight * imgWidth
+                for (i in 0..<imgHeight) {
+                    for (j in 0..<imgWidth) {
+                        // If the mask value for this pixel is > 0, it's part of an object.
+                        if (mask[maskStartIndex + j + i * imgWidth] > 0) {
+                            // 4. Apply the colored mask pixel to the final bitmap.
+                            finalBitmap.setPixel(j, i, semiTransparentColor)
+                        }
+                    }
+                }
+            }
+
+            return@withContext listOf(finalBitmap)
         }
 
     private fun saveBitmap(
