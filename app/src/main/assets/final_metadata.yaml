@@ -1,0 +1,9 @@
+stride: 32
+task: detect
+batch: 1
+imgsz:
+  - 640
+  - 640
+names:
+  0: conrete coloumns
+  1: concrete_walls
