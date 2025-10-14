@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -92,6 +92,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.tensorflow.lite.examples.objectdetection.detectors.YoloDetector
 import setProgressDialogText
 import showProgressDialog
 import java.io.File
@@ -99,10 +100,6 @@ import java.nio.FloatBuffer
 import java.nio.file.Paths
 import kotlin.time.DurationUnit
 import kotlin.time.measureTimedValue
-
-import org.tensorflow.lite.examples.objectdetection.detectors.ObjectDetector
-import org.tensorflow.lite.examples.objectdetection.detectors.YoloDetector
-import org.tensorflow.lite.support.image.TensorImage
 
 class MainActivity : ComponentActivity() {
     private val encoder = SAMEncoder()
@@ -120,7 +117,7 @@ class MainActivity : ComponentActivity() {
             0.5f,
             0.3f,
             2,
-            5,
+            15,
             0, // CPU
             4, // YOLO
             context = this,
@@ -203,40 +200,7 @@ class MainActivity : ComponentActivity() {
                                     imageVector = Icons.Default.Tag,
                                     contentDescription = "Choose Label For Points",
                                 )
-                                Text(text = "Choose Label For Points")
-                            }
-                        }
-
-                        Row(
-                            modifier =
-                                Modifier
-                                    .padding(horizontal = 8.dp)
-                                    .fillMaxWidth(),
-                        ) {
-                            Button(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(4.dp)
-                                        .weight(1f),
-                                enabled = isReady && (image != null),
-                                onClick = {
-                                    image?.let { bitmap ->
-                                        detectAndProcess(bitmap, viewPortDims, viewModel)
-//                                        processInputPoints(
-//                                            bitmap,
-//                                            points,
-//                                            viewPortDims,
-//                                            viewModel,
-//                                        )
-                                    }
-                                },
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Layers,
-                                    contentDescription = "Segment",
-                                )
-                                Text(text = "Segment!")
+                                Text(text = "Choose Label")
                             }
                             Button(
                                 modifier =
@@ -259,10 +223,67 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
+                        Row(
+                            modifier =
+                                Modifier
+                                    .padding(horizontal = 8.dp)
+                                    .fillMaxWidth(),
+                        ) {
+                            Button(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(4.dp)
+                                        .weight(1f),
+                                enabled = isReady && (image != null),
+                                onClick = {
+                                    image?.let { bitmap ->
+                                        runYoloAndDisplayPoints(bitmap, viewPortDims, viewModel)
+                                    }
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Layers,
+                                    contentDescription = "Detect Objects",
+                                )
+                                Text(text = "Detect Objects (YOLO)")
+                            }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp)
+                                .fillMaxWidth()
+                        ) {
+                            Button(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(4.dp)
+                                        .weight(1f),
+                                enabled = isReady && points.isNotEmpty(),
+                                onClick = {
+                                    image?.let { bitmap ->
+                                        processInputPoints(
+                                            bitmap,
+                                            points,
+                                            viewPortDims,
+                                            viewModel,
+                                        )
+                                    }
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Layers,
+                                    contentDescription = "Segment",
+                                )
+                                Text(text = "Segment with SAM")
+                            }
+                        }
+
                         if (image != null) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Currently selected label: Label ${viewModel.selectedLabelIndex.intValue}",
+                                text = "Currently selected label (for manual points): Label ${viewModel.selectedLabelIndex.intValue}",
                                 fontSize = 12.sp,
                                 color = Color.DarkGray,
                                 textAlign = TextAlign.Center,
@@ -281,16 +302,15 @@ class MainActivity : ComponentActivity() {
                                         Modifier
                                             .pointerInput(Unit) {
                                                 detectTapGestures(onLongPress = {
-                                                    val newPoints =
-                                                        points.filter { it.label != viewModel.selectedLabelIndex.intValue }
+                                                    // Clear all points (both manual and from YOLO)
                                                     points.clear()
-                                                    points.addAll(newPoints)
                                                     Toast
                                                         .makeText(
                                                             this@MainActivity,
                                                             "All guide-points removed",
                                                             Toast.LENGTH_LONG,
-                                                        ).show()
+                                                        )
+                                                        .show()
                                                 }, onTap = { offset ->
                                                     points.add(
                                                         LabelPoint(
@@ -309,36 +329,41 @@ class MainActivity : ComponentActivity() {
                                         Modifier
                                             .fillMaxSize()
                                             .drawWithCache {
+                                                // Define a list of colors for drawing points of different labels.
+                                                val pointColors = listOf(
+                                                    Color.Yellow, Color.Cyan, Color.Green,
+                                                    Color.Magenta, Color.Red, Color.White, Color.Blue, Color.Black
+                                                )
                                                 onDrawBehind {
-                                                    points
-                                                        .filter { labelPoint -> labelPoint.label == viewModel.selectedLabelIndex.intValue }
-                                                        .forEach { labelPoint ->
-                                                            drawCircle(
-                                                                color = Color.Black,
-                                                                radius = 15f,
-                                                                center =
-                                                                    Offset(
-                                                                        labelPoint.point.x,
-                                                                        labelPoint.point.y,
-                                                                    ),
-                                                            )
-                                                            drawCircle(
-                                                                color = Color.Yellow,
-                                                                radius = 12f,
-                                                                center =
-                                                                    Offset(
-                                                                        labelPoint.point.x,
-                                                                        labelPoint.point.y,
-                                                                    ),
-                                                            )
-                                                        }
+                                                    // Draw all points, coloring them based on their label.
+                                                    points.forEach { labelPoint ->
+                                                        val color = pointColors[labelPoint.label % pointColors.size]
+                                                        drawCircle(
+                                                            color = Color.Black,
+                                                            radius = 15f,
+                                                            center =
+                                                                Offset(
+                                                                    labelPoint.point.x,
+                                                                    labelPoint.point.y,
+                                                                ),
+                                                        )
+                                                        drawCircle(
+                                                            color = color,
+                                                            radius = 12f,
+                                                            center =
+                                                                Offset(
+                                                                    labelPoint.point.x,
+                                                                    labelPoint.point.y,
+                                                                ),
+                                                        )
+                                                    }
                                                 }
                                             },
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Tap on the image to insert a guide-point\nLong-press to remove all guide-points for the current label",
+                                text = "Tap to add a manual point.\nLong-press to remove all points.",
                                 fontSize = 12.sp,
                                 color = Color.DarkGray,
                                 textAlign = TextAlign.Center,
@@ -461,10 +486,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun detectAndProcess(
+    private fun runYoloAndDisplayPoints(
         bitmap: Bitmap,
         viewPortDims: Size?,
-        viewModel: MainActivityViewModel
+        viewModel: MainActivityViewModel,
     ) {
         if (viewPortDims == null) {
             Toast.makeText(this, "View not ready, please wait.", Toast.LENGTH_SHORT).show()
@@ -504,55 +529,37 @@ class MainActivity : ComponentActivity() {
             val scaleXyolo = bitmap.width.toFloat() / preprocessedImage.width
             val scaleYyolo = bitmap.height.toFloat() / preprocessedImage.height
 
-
             // 3. Convert detector's bounding boxes to LabelPoints in VIEW coordinates.
-            // For each bounding box, we use the top-left and bottom-right corners as point prompts for SAM.
-            // We use the detection's index as a unique label for each object.
             val detectedPoints = detectionResult.detections.withIndex().flatMap { (index, detection) ->
                 val yoloBox = detection.boundingBox
-                // a. Get corners of the box in preprocessed image coordinates
-                val topLeftX = yoloBox.left
-                val topLeftY = yoloBox.top
-                val bottomRightX = yoloBox.right
-                val bottomRightY = yoloBox.bottom
+                val topLeft = PointF(yoloBox.left, yoloBox.top)
+                val bottomRight = PointF(yoloBox.right, yoloBox.bottom)
 
-                // b. Scale corners to original bitmap coordinates
-                val bitmapTopLeftX = topLeftX * scaleXyolo
-                val bitmapTopLeftY = topLeftY * scaleYyolo
-                val bitmapBottomRightX = bottomRightX * scaleXyolo
-                val bitmapBottomRightY = bottomRightY * scaleYyolo
+                // Create two LabelPoints for the bounding box corners, using the detection index as a unique label
+                listOf(topLeft, bottomRight).map { corner ->
+                    // a. Scale from preprocessed coordinates to original bitmap coordinates
+                    val bitmapX = corner.x * scaleXyolo
+                    val bitmapY = corner.y * scaleYyolo
 
-                // c. Scale corners to view coordinates to be displayed on screen
-                val viewTopLeftX = bitmapTopLeftX * scale + offsetX
-                val viewTopLeftY = bitmapTopLeftY * scale + offsetY
-                val viewBottomRightX = bitmapBottomRightX * scale + offsetX
-                val viewBottomRightY = bitmapBottomRightY * scale + offsetY
+                    // b. Scale from original bitmap coordinates to view coordinates
+                    val viewX = bitmapX * scale + offsetX
+                    val viewY = bitmapY * scale + offsetY
 
-                // d. Create two LabelPoints for the bounding box, using the index as a unique label
-                listOf(
+                    // c. Create the LabelPoint for display and SAM
                     LabelPoint(
                         label = index, // Use the object's index as its unique label
-                        point = PointF(viewTopLeftX, viewTopLeftY)
-                    ),
-                    LabelPoint(
-                        label = index, // Use the same unique label for both points of the box
-                        point = PointF(viewBottomRightX, viewBottomRightY)
+                        point = PointF(viewX, viewY),
                     )
-                )
+                }
             }
 
-            // 4. Update the points in the ViewModel to show them on screen
-            // and then trigger segmentation.
+            // 4. Update the points in the ViewModel to show them on screen.
             withContext(Dispatchers.Main) {
                 viewModel.points.clear()
                 viewModel.points.addAll(detectedPoints)
             }
-
-            // 5. Call the existing processing function with the newly generated points.
-            processInputPoints(bitmap, detectedPoints, viewPortDims, viewModel)
         }
     }
-
 
     private fun processInputPoints(
         bitmap: Bitmap,
@@ -565,26 +572,33 @@ class MainActivity : ComponentActivity() {
                 showProgressDialog()
                 setProgressDialogText("Performing image segmentation...")
                 val pointsGroupByLabel = points.groupBy { it.label }
-                val maxPoints = pointsGroupByLabel.maxOfOrNull { it.value.size } ?: return@launch
+                // Ensure maxPoints is at least 2 for bounding boxes, but can be more for manual points
+                val maxPoints = pointsGroupByLabel.values.maxOfOrNull { it.size } ?: 0
+                if (maxPoints == 0) return@launch
+
                 val labelsCount = pointsGroupByLabel.keys.size
 
-                val labelsBuffer = FloatBuffer.allocate(1 * labelsCount * maxPoints)
-                val pointsBuffer = FloatBuffer.allocate(1 * labelsCount * maxPoints * 2)
+                val labelsBuffer = FloatBuffer.allocate(labelsCount * maxPoints)
+                val pointsBuffer = FloatBuffer.allocate(labelsCount * maxPoints * 2)
 
-                for ((label, labelPoints) in pointsGroupByLabel) {
+                // Sort by label to ensure consistent order
+                for ((label, labelPoints) in pointsGroupByLabel.toSortedMap()) {
                     labelPoints.forEach {
                         pointsBuffer.put((it.point.x / viewPortDims?.width!!) * 1024f)
                         pointsBuffer.put((it.point.y / viewPortDims.height) * 1024f)
                     }
+                    // Pad remaining points for this label with 0
                     repeat(maxPoints - labelPoints.size) {
                         pointsBuffer.put(0f)
                         pointsBuffer.put(0f)
                     }
+
+                    // For each actual point, add its label. Pad with -1.
                     repeat(labelPoints.size) {
-                        labelsBuffer.put((label + 1).toFloat())
+                        labelsBuffer.put((label + 1).toFloat()) // SAM expects 1-based labels for foreground
                     }
                     repeat(maxPoints - labelPoints.size) {
-                        labelsBuffer.put(-1f)
+                        labelsBuffer.put(-1f) // Padding label
                     }
                 }
                 pointsBuffer.rewind()
@@ -614,9 +628,10 @@ class MainActivity : ComponentActivity() {
                     dialogText = "An error occurred: ${e.message}",
                     dialogPositiveButtonText = "Close",
                     dialogNegativeButtonText = null,
-                    onPositiveButtonClick = { finish() },
+                    onPositiveButtonClick = { },
                     onNegativeButtonClick = null,
                 )
+                Log.e("SAMError", "Error in processInputPoints", e)
             }
         }
     }

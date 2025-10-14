@@ -27,6 +27,7 @@ class YoloDetector(
         yolo = TfliteDetector(context)
         yolo.setIouThreshold(iouThreshold)
         yolo.setConfidenceThreshold(confidenceThreshold)
+        yolo.setNumItemsThreshold(maxResults)
 
         // val modelPath = "YOLO11n-catsdogs_float32.tflite"
         // val metadataPath = "metadata-catsdogs.yaml"

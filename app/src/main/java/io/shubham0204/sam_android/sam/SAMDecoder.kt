@@ -179,8 +179,8 @@ class SAMDecoder {
 
             // 1. Define a list of colors for the masks. You can add more colors here.
             val colors = listOf(
-                Color.RED, Color.GREEN, Color.BLUE, Color.YELLOW, Color.CYAN,
-                Color.MAGENTA, Color.rgb(255, 165, 0), Color.rgb(128, 0, 128)
+                Color.YELLOW, Color.CYAN, Color.GREEN, Color.MAGENTA, Color.RED,
+                Color.WHITE, Color.BLUE, Color.BLACK
             )
 
             // Loop through each label and modify the single bitmap.
