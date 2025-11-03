@@ -122,10 +122,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         yoloDetector = YoloDetector(
+            0.1f,
             0.5f,
-            0.3f,
             2,
-            20,
+            50,
             0, // GPU
             4, // YOLO
             context = this,
