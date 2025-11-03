@@ -29,6 +29,7 @@ class MainActivityViewModel : ViewModel() {
     val labels = mutableStateListOf("Label 0")
     val points = mutableStateListOf<MainActivity.LabelPoint>()
     val images = mutableStateListOf<Bitmap>()
+    val maskImage = mutableStateOf<Bitmap?>(null)
     val inferenceTime = mutableIntStateOf(0)
 
     fun reset() {

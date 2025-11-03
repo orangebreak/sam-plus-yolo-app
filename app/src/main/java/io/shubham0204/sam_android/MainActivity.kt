@@ -48,10 +48,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Tag
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -95,6 +97,7 @@ import kotlinx.coroutines.withContext
 import setProgressDialogText
 import showProgressDialog
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.FloatBuffer
 import java.nio.file.Paths
 import kotlin.time.DurationUnit
@@ -104,6 +107,8 @@ import org.tensorflow.lite.examples.objectdetection.detectors.ObjectDetector
 import org.tensorflow.lite.examples.objectdetection.detectors.YoloDetector
 import org.tensorflow.lite.support.image.TensorImage
 
+
+// TODO: change all mentions of label to object, since each label represents one object
 class MainActivity : ComponentActivity() {
     private val encoder = SAMEncoder()
     private val decoder = SAMDecoder()
@@ -120,7 +125,7 @@ class MainActivity : ComponentActivity() {
             0.5f,
             0.3f,
             2,
-            10,
+            20,
             0, // GPU
             4, // YOLO
             context = this,
@@ -139,6 +144,7 @@ class MainActivity : ComponentActivity() {
 
                         var image by remember { mutableStateOf<Bitmap?>(null) }
                         val outputImages = remember { viewModel.images }
+                        var maskImage by remember { viewModel.maskImage }
                         val points = remember { viewModel.points }
                         var isReady by remember { mutableStateOf(false) }
                         var viewPortDims by remember { mutableStateOf<Size?>(null) }
@@ -195,15 +201,41 @@ class MainActivity : ComponentActivity() {
                                         .fillMaxWidth()
                                         .padding(4.dp)
                                         .weight(1f),
+                                enabled = isReady,
+                                onClick = {
+                                    pickMediaLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                    )
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Image,
+                                    contentDescription = "Select Image",
+                                )
+                                Text(text = "Select Image")
+                            }
+                        }
+                        Row(
+                            modifier =
+                                Modifier
+                                    .padding(horizontal = 8.dp)
+                                    .fillMaxWidth(),
+                        ) {
+                            Button(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(4.dp)
+                                        .weight(1f),
                                 onClick = {
                                     viewModel.showBottomSheet.value = true
                                 },
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Tag,
-                                    contentDescription = "Choose Label For Points",
+                                    contentDescription = "Choose Object For Points",
                                 )
-                                Text(text = "Choose Label For Points")
+                                Text(text = "Choose Object")
                             }
                         }
 
@@ -222,21 +254,15 @@ class MainActivity : ComponentActivity() {
                                 enabled = isReady && (image != null),
                                 onClick = {
                                     image?.let { bitmap ->
-                                        detectAndProcess(bitmap, viewPortDims, viewModel)
-//                                        processInputPoints(
-//                                            bitmap,
-//                                            points,
-//                                            viewPortDims,
-//                                            viewModel,
-//                                        )
+                                        detectObjects(bitmap, viewPortDims, viewModel)
                                     }
                                 },
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Layers,
-                                    contentDescription = "Segment",
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = "Detect",
                                 )
-                                Text(text = "Segment!")
+                                Text(text = "Detect")
                             }
                             Button(
                                 modifier =
@@ -244,25 +270,56 @@ class MainActivity : ComponentActivity() {
                                         .fillMaxWidth()
                                         .padding(4.dp)
                                         .weight(1f),
-                                enabled = isReady,
+                                enabled = isReady && (image != null) && points.isNotEmpty(),
                                 onClick = {
-                                    pickMediaLauncher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                                    )
+                                    image?.let { bitmap ->
+                                        processInputPoints(
+                                            bitmap,
+                                            points,
+                                            viewPortDims,
+                                            viewModel,
+                                        )
+                                    }
                                 },
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Image,
-                                    contentDescription = "Select Image",
+                                    imageVector = Icons.Default.Layers,
+                                    contentDescription = "Segment",
                                 )
-                                Text(text = "Select Image")
+                                Text(text = "Segment")
+                            }
+                        }
+                        if (maskImage != null) {
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .padding(horizontal = 8.dp)
+                                        .fillMaxWidth(),
+                            ) {
+                                Button(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(4.dp)
+                                            .weight(1f),
+                                    enabled = isReady && (image != null),
+                                    onClick = {
+                                        saveBitmap(maskImage!!)
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Save,
+                                        contentDescription = "Save",
+                                    )
+                                    Text("Save Mask")
+                                }
                             }
                         }
 
                         if (image != null) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Currently selected label: Label ${viewModel.selectedLabelIndex.intValue}",
+                                text = "Currently selected object: Object ${viewModel.selectedLabelIndex.intValue}",
                                 fontSize = 12.sp,
                                 color = Color.DarkGray,
                                 textAlign = TextAlign.Center,
@@ -393,7 +450,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     Row {
                         Text(
-                            text = "Manage Labels",
+                            text = "Manage Objects",
                             fontSize = 18.sp,
                             modifier =
                                 Modifier
@@ -438,10 +495,10 @@ class MainActivity : ComponentActivity() {
                                     .weight(1f),
                             onClick = {
                                 lastAddedLabel += 1
-                                labels.add("Label $lastAddedLabel")
+                                labels.add("Object $lastAddedLabel")
                             },
                         ) {
-                            Text(text = "Add Label")
+                            Text(text = "Add Object")
                         }
                         Button(
                             modifier =
@@ -453,7 +510,7 @@ class MainActivity : ComponentActivity() {
                                 labels.removeAt(selectedLabelIndex)
                             },
                         ) {
-                            Text(text = "Remove Label")
+                            Text(text = "Remove Object")
                         }
                     }
                 }
@@ -461,10 +518,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun detectAndProcess(
+    private fun detectObjects(
         bitmap: Bitmap,
         viewPortDims: Size?,
-        viewModel: MainActivityViewModel
+        viewModel: MainActivityViewModel,
     ) {
         if (viewPortDims == null) {
             Toast.makeText(this, "View not ready, please wait.", Toast.LENGTH_SHORT).show()
@@ -504,11 +561,8 @@ class MainActivity : ComponentActivity() {
             val scaleXyolo = bitmap.width.toFloat() / preprocessedImage.width
             val scaleYyolo = bitmap.height.toFloat() / preprocessedImage.height
 
-
             // 3. Convert detector's bounding boxes to LabelPoints in VIEW coordinates.
-            // For each bounding box, we use the top-left and bottom-right corners as point prompts for SAM.
-            // We use the detection's index as a unique label for each object.
-            val detectedPoints = detectionResult.detections.withIndex().flatMap { (index, detection) ->
+            val detectedPoints = detectionResult.detections.withIndex().map { (index, detection) ->
                 val yoloBox = detection.boundingBox
                 // a. Get corners of the box in preprocessed image coordinates
                 val topLeftX = yoloBox.left
@@ -528,31 +582,24 @@ class MainActivity : ComponentActivity() {
                 val viewBottomRightX = bitmapBottomRightX * scale + offsetX
                 val viewBottomRightY = bitmapBottomRightY * scale + offsetY
 
-                // d. Create two LabelPoints for the bounding box, using the index as a unique label
-                listOf(
-                    LabelPoint(
-                        label = index, // Use the object's index as its unique label
-                        point = PointF(viewTopLeftX, viewTopLeftY)
-                    ),
-                    LabelPoint(
-                        label = index, // Use the same unique label for both points of the box
-                        point = PointF(viewBottomRightX, viewBottomRightY)
-                    )
+                val centerX = (viewTopLeftX + viewBottomRightX) / 2
+                val centerY = (viewTopLeftY + viewBottomRightY) / 2
+
+                // d. Create a LabelPoint for the center of the bounding box
+                LabelPoint(
+                    label = index, // Use the object's index as its unique label
+                    point = PointF(centerX, centerY),
                 )
             }
 
-            // 4. Update the points in the ViewModel to show them on screen
-            // and then trigger segmentation.
+            // 4. Update the points in the ViewModel to show them on the screen.
             withContext(Dispatchers.Main) {
                 viewModel.points.clear()
                 viewModel.points.addAll(detectedPoints)
+                Toast.makeText(this@MainActivity, "${detectedPoints.size} objects detected", Toast.LENGTH_SHORT).show()
             }
-
-            // 5. Call the existing processing function with the newly generated points.
-            processInputPoints(bitmap, detectedPoints, viewPortDims, viewModel)
         }
     }
-
 
     private fun processInputPoints(
         bitmap: Bitmap,
@@ -581,7 +628,7 @@ class MainActivity : ComponentActivity() {
                         pointsBuffer.put(0f)
                     }
                     repeat(labelPoints.size) {
-                        labelsBuffer.put((label + 1).toFloat())
+                        labelsBuffer.put(1f)
                     }
                     repeat(maxPoints - labelPoints.size) {
                         labelsBuffer.put(-1f)
@@ -601,11 +648,15 @@ class MainActivity : ComponentActivity() {
                             bitmap,
                         )
                     }
+                val (viewBitmap, maskBitmap) = imagesWithMask
+
                 withContext(Dispatchers.Main) {
                     viewModel.inferenceTime.intValue = time.toInt(DurationUnit.SECONDS)
                     hideProgressDialog()
                     viewModel.images.clear()
-                    viewModel.images.addAll(imagesWithMask)
+                    viewModel.images.add(viewBitmap)
+                    viewModel.images.add(maskBitmap)
+                    viewModel.maskImage.value = maskBitmap
                 }
             } catch (e: Exception) {
                 hideProgressDialog()
@@ -617,6 +668,24 @@ class MainActivity : ComponentActivity() {
                     onPositiveButtonClick = { finish() },
                     onNegativeButtonClick = null,
                 )
+            }
+        }
+    }
+
+    private fun saveBitmap(bitmap: Bitmap) {
+        try {
+            val file = File(getExternalFilesDir(null), "mask_${System.currentTimeMillis()}.png")
+            val fOut = FileOutputStream(file)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, fOut)
+            fOut.flush()
+            fOut.close()
+            runOnUiThread {
+                Toast.makeText(this, "Mask saved to ${file.absolutePath}", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            runOnUiThread {
+                Toast.makeText(this, "Error saving mask: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
     }

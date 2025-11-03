@@ -97,7 +97,7 @@ class SAMDecoder {
         numLabels: Long,
         numPoints: Long,
         inputImage: Bitmap,
-    ): List<Bitmap> =
+    ): Pair<Bitmap, Bitmap> =
         withContext(Dispatchers.Default) {
             val imgHeight = inputImage.height
             val imgWidth = inputImage.width
@@ -175,7 +175,7 @@ class SAMDecoder {
             Log.i(SAMDecoder::class.simpleName, "Mask size: ${mask.capacity()}")
 
             // Create a single mutable bitmap from the input image. This will be our canvas.
-            val finalBitmap = inputImage.copy(Bitmap.Config.ARGB_8888, true)
+            val viewBitmap = inputImage.copy(Bitmap.Config.ARGB_8888, true)
 
             // 1. Define a list of colors for the masks. You can add more colors here.
             val colors = listOf(
@@ -190,7 +190,7 @@ class SAMDecoder {
 
                 // 3. Create a semi-transparent version of the color (128 is ~50% transparent).
                 val semiTransparentColor = Color.argb(
-                    128,
+                    32,
                     Color.red(colorForLabel),
                     Color.green(colorForLabel),
                     Color.blue(colorForLabel)
@@ -202,13 +202,36 @@ class SAMDecoder {
                         // If the mask value for this pixel is > 0, it's part of an object.
                         if (mask[maskStartIndex + j + i * imgWidth] > 0) {
                             // 4. Apply the colored mask pixel to the final bitmap.
-                            finalBitmap.setPixel(j, i, semiTransparentColor)
+                            viewBitmap.setPixel(j, i, semiTransparentColor)
                         }
                     }
                 }
             }
 
-            return@withContext listOf(finalBitmap)
+            // this will be the bitmap to export as a file
+            val maskBitmap = inputImage.copy(Bitmap.Config.ARGB_8888, true)
+            for (i in 0..<imgHeight) {
+                for (j in 0..<imgWidth) {
+                    maskBitmap.setPixel(j, i, Color.BLACK)
+                }
+            }
+
+            // Loop through each label and modify the single bitmap.
+            for (labelIndex in 0..<numLabels.toInt()) {
+
+                val maskStartIndex = labelIndex * numPredictedMasks * imgHeight * imgWidth
+                for (i in 0..<imgHeight) {
+                    for (j in 0..<imgWidth) {
+                        // If the mask value for this pixel is > 0, it's part of an object.
+                        if (mask[maskStartIndex + j + i * imgWidth] > 0) {
+                            // 4. Apply the colored mask pixel to the final bitmap.
+                            maskBitmap.setPixel(j, i, Color.WHITE)
+                        }
+                    }
+                }
+            }
+
+            return@withContext Pair(viewBitmap, maskBitmap)
         }
 
     private fun saveBitmap(
