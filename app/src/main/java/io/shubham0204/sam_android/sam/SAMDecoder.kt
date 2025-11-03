@@ -22,7 +22,9 @@ import ai.onnxruntime.OrtSession
 import ai.onnxruntime.providers.NNAPIFlags
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.util.Log
 import androidx.core.graphics.get
 import androidx.core.graphics.set
@@ -135,10 +137,12 @@ class SAMDecoder {
 
             // Create a single mutable bitmap from the input image. This will be our canvas.
             val viewBitmap = inputImage.copy(Bitmap.Config.ARGB_8888, true)
+            val canvas = Canvas(viewBitmap)
+            val paint = Paint()
 
             // this will be the bitmap to export as a file
             val maskBitmap = Bitmap.createBitmap(imgWidth, imgHeight, Bitmap.Config.ARGB_8888)
-            maskBitmap.eraseColor(Color.BLACK)
+            val maskBitmapPixels = IntArray(imgWidth * imgHeight, { _ -> Color.BLACK })
 
 
             // 1. Define a list of colors for the masks. You can add more colors here.
@@ -147,7 +151,7 @@ class SAMDecoder {
                 Color.WHITE, Color.BLUE, Color.BLACK
             )
 
-            val batchSize = 14
+            val batchSize = 10
             for (labelIndex in 0 until numLabels.toInt() step batchSize) {
                 val batchEndIndex = (labelIndex + batchSize).coerceAtMost(numLabels.toInt())
                 val currentBatchSize = batchEndIndex - labelIndex
@@ -192,54 +196,44 @@ class SAMDecoder {
                             outputs.use {
                                 val mask = (outputs[maskOutputName].get() as OnnxTensor).floatBuffer
                                 val scores =
-                                    (outputs[scoresOutputName].get() as OnnxTensor).floatBuffer.array()
-                                Log.i(
-                                    SAMDecoder::class.simpleName,
-                                    "scores: ${scores.contentToString()}"
-                                )
-
-                                val numPredictedMasks = scores.size / currentBatchSize
-                                Log.i(
-                                    SAMDecoder::class.simpleName,
-                                    "Num predicted masks: $numPredictedMasks"
-                                )
-                                Log.i(
-                                    SAMDecoder::class.simpleName,
-                                    "Mask size: ${mask.capacity()}"
-                                )
-
+                                    (outputs[scoresOutputName].get() as OnnxTensor).floatBuffer
+                                val numPredictedMasks = scores.capacity() / currentBatchSize
 
                                 for (batchItemIndex in 0 until currentBatchSize) {
                                     val currentLabel = labelIndex + batchItemIndex
-                                    // 2. Get a unique color for the current label, cycling through the list.
                                     val colorForLabel = colors[currentLabel % colors.size]
 
-                                    // 3. Create a semi-transparent version of the color (128 is ~50% transparent).
                                     val semiTransparentColor = Color.argb(
-                                        32,
+                                        128,
                                         Color.red(colorForLabel),
                                         Color.green(colorForLabel),
                                         Color.blue(colorForLabel)
                                     )
+                                    paint.color = semiTransparentColor
 
                                     val maskStartIndex =
                                         batchItemIndex * numPredictedMasks * imgHeight * imgWidth
+
+                                    // Instead of slow setPixel, collect all mask points and draw them at once.
+                                    val pointCloud = mutableListOf<Float>()
                                     for (i in 0..<imgHeight) {
                                         for (j in 0..<imgWidth) {
                                             // If the mask value for this pixel is > 0, it's part of an object.
                                             if (mask[maskStartIndex + j + i * imgWidth] > 0) {
-                                                // 4. Apply the colored mask pixel to the final bitmap.
-                                                viewBitmap.setPixel(j, i, semiTransparentColor)
-                                                maskBitmap.setPixel(j, i, Color.WHITE)
+                                                pointCloud.add(j.toFloat())
+                                                pointCloud.add(i.toFloat())
+                                                maskBitmapPixels[j + i * imgWidth] = Color.WHITE
                                             }
                                         }
                                     }
+                                    canvas.drawPoints(pointCloud.toFloatArray(), paint)
                                 }
                             }
                         }
                     }
                 }
             }
+            maskBitmap.setPixels(maskBitmapPixels, 0, imgWidth, 0, 0, imgWidth, imgHeight)
 
             imageEmbeddingTensor.close()
             highResFeature0Tensor.close()

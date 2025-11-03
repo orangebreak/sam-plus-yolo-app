@@ -122,7 +122,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         yoloDetector = YoloDetector(
-            0.1f,
+            0.0f,
             0.5f,
             2,
             50,
