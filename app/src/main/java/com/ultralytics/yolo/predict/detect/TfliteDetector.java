@@ -30,18 +30,20 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
-
+import com.quicinc.tflite.AIHubDefaults;
+import com.quicinc.tflite.TFLiteHelpers;
+import org.tensorflow.lite.Delegate;
+import android.util.Pair;
+import java.security.NoSuchAlgorithmException;
 
 public class TfliteDetector extends Detector {
 
+    private Map<TFLiteHelpers.DelegateType, Delegate> tfLiteDelegateStore;
 
-    private static final long FPS_INTERVAL_MS = 1000; // Update FPS every 1000 milliseconds (1 second)
     private static final int NUM_BYTES_PER_CHANNEL = 4;
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    // private final Matrix transformationMatrix;
+
     private final Bitmap pendingBitmapFrame;
     private int numClasses;
-    private int frameCount = 0;
     private double confidenceThreshold = 0.25f;
     private double iouThreshold = 0.45f;
     private int numItemsThreshold = 30;
@@ -50,7 +52,7 @@ public class TfliteDetector extends Detector {
     private int outputShape2;
     private int outputShape3;
     private float[][] output;
-    private long lastFpsTime = System.currentTimeMillis();
+
     private Map<Integer, Object> outputMap;
     private ObjectDetectionResultCallback objectDetectionResultCallback;
     private FloatResultCallback inferenceTimeCallback;
@@ -95,23 +97,69 @@ public class TfliteDetector extends Detector {
 
     @Override
     public void loadModel(YoloModel yoloModel, boolean useGpu) throws Exception {
-        if (yoloModel instanceof LocalYoloModel) {
-            final LocalYoloModel localYoloModel = (LocalYoloModel) yoloModel;
+        if (!(yoloModel instanceof LocalYoloModel)) {
+            throw new PredictorException("Only LocalYoloModel is supported for this detector.");
+        }
 
-            if (localYoloModel.modelPath == null || localYoloModel.modelPath.isEmpty() ||
-                    localYoloModel.metadataPath == null || localYoloModel.metadataPath.isEmpty()) {
-                throw new Exception();
-            }
+        final LocalYoloModel localYoloModel = (LocalYoloModel) yoloModel;
 
-            final AssetManager assetManager = context.getAssets();
-            loadLabels(assetManager, localYoloModel.metadataPath);
-            numClasses = labels.size();
-            try {
-                MappedByteBuffer modelFile = loadModelFile(assetManager, localYoloModel.modelPath);
-                initDelegate(modelFile, useGpu);
-            } catch (Exception e) {
-                throw new PredictorException("Error model");
+        if (localYoloModel.modelPath == null || localYoloModel.modelPath.isEmpty() ||
+                localYoloModel.metadataPath == null || localYoloModel.metadataPath.isEmpty()) {
+            throw new PredictorException("Model or metadata path is empty.");
+        }
+
+        final AssetManager assetManager = context.getAssets();
+        loadLabels(assetManager, localYoloModel.metadataPath);
+        numClasses = labels.size();
+
+        try {
+            // 1. Load model file AND hash using the TFLiteHelpers class
+            Pair<MappedByteBuffer, String> modelData = TFLiteHelpers.loadModelFile(assetManager, localYoloModel.modelPath);
+            MappedByteBuffer modelFile = modelData.first;
+            String modelHash = modelData.second;
+
+            // 2. Get the default NPU-first delegate priority order
+            // We ignore the 'useGpu' parameter and use the AI Hub default, which tries NPU first.
+            TFLiteHelpers.DelegateType[][] delegatePriorityOrder = AIHubDefaults.delegatePriorityOrder;
+
+            // 3. Create the Interpreter and Delegates
+            Pair<Interpreter, Map<TFLiteHelpers.DelegateType, Delegate>> iResult = TFLiteHelpers.CreateInterpreterAndDelegatesFromOptions(
+                    modelFile,
+                    delegatePriorityOrder,
+                    AIHubDefaults.numCPUThreads, // Use default CPU threads from AIHubDefaults
+                    context.getApplicationInfo().nativeLibraryDir,
+                    context.getCacheDir().getAbsolutePath(),
+                    modelHash
+            );
+
+            // 4. Store the new interpreter and delegates
+            this.interpreter = iResult.first;
+            this.tfLiteDelegateStore = iResult.second;
+
+            // 5. This logic is from your original initDelegate and is still needed
+            int[] outputShape = interpreter.getOutputTensor(0).shape();
+            outputShape2 = outputShape[1];
+            outputShape3 = outputShape[2];
+            output = new float[outputShape2][outputShape3];
+
+        } catch (IOException | NoSuchAlgorithmException e) {
+            throw new PredictorException("Error loading model or creating interpreter: " + e.getMessage());
+        } catch (Exception e) {
+            throw new PredictorException("Error initializing model: " + e.getMessage());
+        }
+    }
+
+    // Add this method to TfliteDetector.java
+
+    public void close() {
+        if (interpreter != null) {
+            interpreter.close();
+        }
+        if (tfLiteDelegateStore != null) {
+            for (Delegate delegate : tfLiteDelegateStore.values()) {
+                delegate.close();
             }
+            tfLiteDelegateStore.clear();
         }
     }
 
@@ -167,43 +215,9 @@ public class TfliteDetector extends Detector {
         fpsRateCallback = callback;
     }
 
-    private MappedByteBuffer loadModelFile(AssetManager assetManager, String modelPath) throws IOException {
 
-        AssetFileDescriptor fileDescriptor = assetManager.openFd(modelPath);
-        FileInputStream inputStream = new FileInputStream(fileDescriptor.getFileDescriptor());
-        FileChannel fileChannel = inputStream.getChannel();
-        long startOffset = fileDescriptor.getStartOffset();
-        long declaredLength = fileDescriptor.getDeclaredLength();
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
 
-    }
 
-    private void initDelegate(MappedByteBuffer buffer, boolean useGpu) {
-        Interpreter.Options interpreterOptions = new Interpreter.Options();
-        try {
-            // Check if GPU support is available
-            CompatibilityList compatibilityList = new CompatibilityList();
-            if (useGpu && compatibilityList.isDelegateSupportedOnThisDevice()) {
-                GpuDelegateFactory.Options delegateOptions = compatibilityList.getBestOptionsForThisDevice();
-                GpuDelegate gpuDelegate = new GpuDelegate(delegateOptions.setQuantizedModelsAllowed(true));
-                interpreterOptions.addDelegate(gpuDelegate);
-            } else {
-                interpreterOptions.setNumThreads(4);
-            }
-            // Create the interpreter
-            this.interpreter = new Interpreter(buffer, interpreterOptions);
-        } catch (Exception e) {
-            interpreterOptions = new Interpreter.Options();
-            interpreterOptions.setNumThreads(4);
-            // Create the interpreter
-            this.interpreter = new Interpreter(buffer, interpreterOptions);
-        }
-
-        int[] outputShape = interpreter.getOutputTensor(0).shape();
-        outputShape2 = outputShape[1];
-        outputShape3 = outputShape[2];
-        output = new float[outputShape2][outputShape3];
-    }
 
     private void setInput(Bitmap resizedbitmap) {
         ByteBuffer imgData = ByteBuffer.allocateDirect(1 * INPUT_SIZE * INPUT_SIZE * 3 * NUM_BYTES_PER_CHANNEL);

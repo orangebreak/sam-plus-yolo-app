@@ -5,7 +5,7 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -64,6 +64,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -102,10 +103,11 @@ import java.nio.FloatBuffer
 import java.nio.file.Paths
 import kotlin.time.DurationUnit
 import kotlin.time.measureTimedValue
-
-import org.tensorflow.lite.examples.objectdetection.detectors.ObjectDetector
+import io.shubham0204.sam_android.ui.SettingsSheet
+// ⬇️ *** ERROR FIX 1: Added missing import for SharedViewModel ***
+import io.shubham0204.sam_android.ui.SharedViewModel
 import org.tensorflow.lite.examples.objectdetection.detectors.YoloDetector
-import org.tensorflow.lite.support.image.TensorImage
+
 
 
 // TODO: change all mentions of label to object, since each label represents one object
@@ -117,23 +119,37 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var yoloDetector: YoloDetector
 
+    // ⬇️ *** ERROR FIX 2: Added OptIn to resolve experimental API warnings ***
+    @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         yoloDetector = YoloDetector(
-            0.0f,
-            0.5f,
-            2,
-            50,
-            0, // GPU
-            4, // YOLO
+            iouThreshold = 0.5f,
+            numThreads = 2,
+            maxResults = 50,
+            currentDelegate = 0, // GPU
+            currentModel = 4, // YOLO
             context = this,
         )
 
         setContent {
             SAMAndroidTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+
+                    // --- START: NEW CODE FOR VIEWMODEL AND BOTTOM SHEET ---
+
+                    // 1. Get an instance of the SharedViewModel for detector settings
+                    val sharedViewModel: SharedViewModel = viewModel()
+                    val detectorSettings by sharedViewModel.uiState.collectAsState()
+
+                    // 2. State for controlling the new bottom sheet
+                    val settingsSheetState = rememberModalBottomSheetState()
+                    var showSettingsBottomSheet by remember { mutableStateOf(false) }
+
+                    // --- END: NEW CODE ---
+
                     Column(
                         modifier =
                             Modifier
@@ -237,6 +253,22 @@ class MainActivity : ComponentActivity() {
                                 )
                                 Text(text = "Choose Object")
                             }
+
+                            Button(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(4.dp)
+                                    .weight(1f),
+                                onClick = {
+                                    showSettingsBottomSheet = true
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Layers, // Using Layers icon for settings
+                                    contentDescription = "Open Detector Settings",
+                                )
+                                Text(text = "Settings")
+                            }
                         }
 
                         Row(
@@ -254,6 +286,7 @@ class MainActivity : ComponentActivity() {
                                 enabled = isReady && (image != null),
                                 onClick = {
                                     image?.let { bitmap ->
+                                        yoloDetector.setConfidenceThreshold(detectorSettings.confidenceThreshold)
                                         detectObjects(bitmap, viewPortDims, viewModel)
                                     }
                                 },
@@ -289,6 +322,17 @@ class MainActivity : ComponentActivity() {
                                 Text(text = "Segment")
                             }
                         }
+
+                        if (showSettingsBottomSheet) {
+                            ModalBottomSheet(
+                                onDismissRequest = { showSettingsBottomSheet = false },
+                                sheetState = settingsSheetState
+                            ) {
+                                // This is our composable with the slider
+                                SettingsSheet(viewModel = sharedViewModel)
+                            }
+                        }
+
                         if (maskImage != null) {
                             Row(
                                 modifier =

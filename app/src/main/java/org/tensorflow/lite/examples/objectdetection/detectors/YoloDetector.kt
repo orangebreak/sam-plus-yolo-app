@@ -10,7 +10,7 @@ import org.tensorflow.lite.support.image.TensorImage
 
 
 class YoloDetector(
-    var confidenceThreshold: Float = 0.5f,
+    // var confidenceThreshold: Float = 0.5f, now set with ui slider
     var iouThreshold: Float = 0.3f,
     var numThreads: Int = 2,
     var maxResults: Int = 3,
@@ -26,7 +26,7 @@ class YoloDetector(
 
         yolo = TfliteDetector(context)
         yolo.setIouThreshold(iouThreshold)
-        yolo.setConfidenceThreshold(confidenceThreshold)
+        yolo.setConfidenceThreshold(0f)
         yolo.setNumItemsThreshold(maxResults)
 
         // val modelPath = "YOLO11n-catsdogs_float32.tflite"
@@ -50,6 +50,16 @@ class YoloDetector(
         ip = ImageProcessing()
 
     }
+
+    /**
+     * Sets the confidence threshold for the next detection.
+     * Call this before calling detect().
+     */
+    fun setConfidenceThreshold(newThreshold: Float) {
+        yolo.setConfidenceThreshold(newThreshold)
+    }
+
+
 
     override fun detect(image: TensorImage, imageRotation: Int): DetectionResult  {
 

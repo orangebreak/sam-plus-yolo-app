@@ -82,6 +82,7 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.0")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.12.0")
     implementation("org.tensorflow:tensorflow-lite-gpu-api:2.12.0")
+    implementation(files("libs/qtld-release.aar"))
 
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
