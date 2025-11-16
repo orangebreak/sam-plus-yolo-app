@@ -77,11 +77,12 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.0")
 
     // TensorFlow Lite
-    implementation(libs.tensorflow.lite)
-    implementation(libs.tensorflow.task.vision)
-    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.12.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.12.0")
+//    implementation(libs.tensorflow.lite)
+//    implementation(libs.tensorflow.task.vision)
+    api("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
 
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)

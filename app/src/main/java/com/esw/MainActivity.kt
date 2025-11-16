@@ -103,6 +103,10 @@ import java.nio.file.Paths
 import kotlin.time.DurationUnit
 import kotlin.time.measureTimedValue
 
+import com.esw.yolo.AIHubDefaults
+import com.esw.yolo.ObjectDetection
+import com.esw.yolo.RectangleBox
+
 // TODO: change all mentions of label to object, since each label represents one object
 class MainActivity : ComponentActivity() {
     private val encoder = SAMEncoder()
@@ -110,21 +114,11 @@ class MainActivity : ComponentActivity() {
     private val encoderFileName = "encoder_base_plus.onnx"
     private val decoderFileName = "decoder_base_plus.onnx"
 
-    private lateinit var yoloDetector: YoloDetector
+    private var yoloDetector: ObjectDetection? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        yoloDetector = YoloDetector(
-            0.0f,
-            0.5f,
-            2,
-            50,
-            0, // GPU
-            4, // YOLO
-            context = this,
-        )
 
         setContent {
             SAMAndroidTheme {
@@ -141,30 +135,49 @@ class MainActivity : ComponentActivity() {
                         val outputImages = remember { viewModel.images }
                         var maskImage by remember { viewModel.maskImage }
                         val points = remember { viewModel.points }
-                        var isReady by remember { mutableStateOf(false) }
+                        var isReady by remember { mutableStateOf(false) } // For SAM models
+                        var isYoloReady by remember { mutableStateOf(false) } // For YOLO model
                         var viewPortDims by remember { mutableStateOf<Size?>(null) }
 
                         LaunchedEffect(0) {
                             try {
                                 showProgressDialog()
                                 setProgressDialogText("Loading models...")
-                                if (isModelInAssets(encoderFileName) && isModelInAssets(decoderFileName)) {
-                                    copyModelToStorage(encoderFileName)
-                                    copyModelToStorage(decoderFileName)
-                                    encoder.init(Paths.get(filesDir.absolutePath, encoderFileName).toString())
-                                    decoder.init(Paths.get(filesDir.absolutePath, decoderFileName).toString())
-                                } else {
-                                    // TODO: try with FP16
-                                    encoder.init("/data/local/tmp/sam/encoder_base_plus.onnx", useFP16 = false)
-                                    decoder.init("/data/local/tmp/sam/decoder_base_plus.onnx", useFP16 = false)
+                                withContext(Dispatchers.IO) { // Run blocking model loading on a background thread
+                                    // Load SAM models
+                                    if (isModelInAssets(encoderFileName) && isModelInAssets(decoderFileName)) {
+                                        copyModelToStorage(encoderFileName)
+                                        copyModelToStorage(decoderFileName)
+                                        encoder.init(Paths.get(filesDir.absolutePath, encoderFileName).toString())
+                                        decoder.init(Paths.get(filesDir.absolutePath, decoderFileName).toString())
+                                    } else {
+                                        // TODO: try with FP16
+                                        encoder.init("/data/local/tmp/sam/encoder_base_plus.onnx", useFP16 = false)
+                                        decoder.init("/data/local/tmp/sam/decoder_base_plus.onnx", useFP16 = false)
+                                    }
+
+                                    // Load YOLO model
+                                    // NOTE: You must have the model and label files in your app's `assets` folder.
+                                    // Adjust the file names as needed.
+                                    val modelAsset = "objectdetection.tflite" // Example model name
+                                    val labelsAsset = "labels.txt"          // Example labels name
+
+                                    yoloDetector = ObjectDetection(
+                                        this@MainActivity,
+                                        modelAsset,
+                                        labelsAsset,
+                                        AIHubDefaults.delegatePriorityOrder,
+                                    )
                                 }
+                                // Update state back on the Main thread
                                 isReady = true
+                                isYoloReady = true
                                 hideProgressDialog()
                             } catch (e: Exception) {
                                 hideProgressDialog()
                                 createAlertDialog(
                                     dialogTitle = "Error",
-                                    dialogText = "An error occurred: ${e.message}",
+                                    dialogText = "An error occurred during model loading: ${e.message}",
                                     dialogPositiveButtonText = "Close",
                                     dialogNegativeButtonText = null,
                                     onPositiveButtonClick = { finish() },
@@ -246,7 +259,7 @@ class MainActivity : ComponentActivity() {
                                         .fillMaxWidth()
                                         .padding(4.dp)
                                         .weight(1f),
-                                enabled = isReady && (image != null),
+                                enabled = isReady && isYoloReady && (image != null),
                                 onClick = {
                                     image?.let { bitmap ->
                                         detectObjects(bitmap, viewPortDims, viewModel)
@@ -523,11 +536,15 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        if (yoloDetector == null) {
+            Toast.makeText(this, "YOLO detector is not initialized.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         CoroutineScope(Dispatchers.Default).launch {
-            // 1. Create a TensorImage from the Bitmap. Rotation is 0 because getFixedBitmap handles it.
-            val tensorImage = org.tensorflow.lite.support.image.TensorImage.fromBitmap(bitmap)
-            val detectionResult = yoloDetector.detect(tensorImage, 0)
-            val preprocessedImage = detectionResult.image
+            // 1. Run YOLO inference. The predict method populates the list.
+            val boundingBoxes = ArrayList<RectangleBox>()
+            yoloDetector?.predict(bitmap, 0, boundingBoxes)
 
             // 2. Calculate scaling factors to map bitmap coordinates to view coordinates.
             // This is necessary because the Image composable uses ContentScale.Fit.
@@ -551,27 +568,17 @@ class MainActivity : ComponentActivity() {
                 offsetX = (viewWidth - bitmapWidth * scale) / 2
             }
 
-            // The detector's bounding box coordinates are relative to the preprocessed (resized) image.
-            // We need to scale them back to the original bitmap's coordinate space first.
-            val scaleXyolo = bitmap.width.toFloat() / preprocessedImage.width
-            val scaleYyolo = bitmap.height.toFloat() / preprocessedImage.height
+            // 3. Convert detector's bounding boxes (in original bitmap coordinates) to LabelPoints in VIEW coordinates.
+            val detectedPoints = boundingBoxes.withIndex().map { (index, detection) ->
+                val yoloBox = detection
 
-            // 3. Convert detector's bounding boxes to LabelPoints in VIEW coordinates.
-            val detectedPoints = detectionResult.detections.withIndex().map { (index, detection) ->
-                val yoloBox = detection.boundingBox
-                // a. Get corners of the box in preprocessed image coordinates
-                val topLeftX = yoloBox.left
-                val topLeftY = yoloBox.top
-                val bottomRightX = yoloBox.right
-                val bottomRightY = yoloBox.bottom
+                // a. Get corners of the box in original bitmap coordinates
+                val bitmapTopLeftX = yoloBox.left
+                val bitmapTopLeftY = yoloBox.top
+                val bitmapBottomRightX = yoloBox.right
+                val bitmapBottomRightY = yoloBox.bottom
 
-                // b. Scale corners to original bitmap coordinates
-                val bitmapTopLeftX = topLeftX * scaleXyolo
-                val bitmapTopLeftY = topLeftY * scaleYyolo
-                val bitmapBottomRightX = bottomRightX * scaleXyolo
-                val bitmapBottomRightY = bottomRightY * scaleYyolo
-
-                // c. Scale corners to view coordinates to be displayed on screen
+                // b. Scale corners to view coordinates to be displayed on screen
                 val viewTopLeftX = bitmapTopLeftX * scale + offsetX
                 val viewTopLeftY = bitmapTopLeftY * scale + offsetY
                 val viewBottomRightX = bitmapBottomRightX * scale + offsetX
@@ -580,7 +587,7 @@ class MainActivity : ComponentActivity() {
                 val centerX = (viewTopLeftX + viewBottomRightX) / 2
                 val centerY = (viewTopLeftY + viewBottomRightY) / 2
 
-                // d. Create a LabelPoint for the center of the bounding box
+                // c. Create a LabelPoint for the center of the bounding box
                 LabelPoint(
                     label = index, // Use the object's index as its unique label
                     point = PointF(centerX, centerY),
