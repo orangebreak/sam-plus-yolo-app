@@ -5,7 +5,7 @@ snakeyaml = "2.2"
 tflite = "2.12.0"
 tfliteGpuPlugin = "0.4.0" # This version is for the task-vision and gpu-delegate-plugin
 
-agp = "8.13.0"
+agp = "8.13.1"
 kotlin = "2.0.0"
 coreKtx = "1.15.0"
 junit = "4.13.2"

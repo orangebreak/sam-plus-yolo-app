@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "SAM-Android"
+rootProject.name = "ESW-project"
 include(":app")

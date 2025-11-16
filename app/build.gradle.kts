@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "io.shubham0204.sam_android"
+    namespace = "com.esw"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.shubham0204.sam_android"
+        applicationId = "com.esw"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
@@ -101,4 +101,8 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+    implementation("org.opencv:opencv:4.10.0")
+    implementation("com.qualcomm.qti:qnn-runtime:2.37.0")
+    implementation("com.qualcomm.qti:qnn-litert-delegate:2.37.0")
 }
